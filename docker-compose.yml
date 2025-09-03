@@ -1,0 +1,153 @@
+version: '3.8'
+
+services:
+  # Backend API Service
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: backend-builder
+    container_name: ai-object-counter-backend
+    ports:
+      - "5000:5000"
+    volumes:
+      - ./backend:/app
+      - ./uploads:/app/uploads
+      - model_cache:/app/model_cache
+    environment:
+      - FLASK_ENV=development
+      - FLASK_DEBUG=1
+      - PYTHONPATH=/app
+    networks:
+      - ai-counter-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  # Frontend Service
+  frontend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: frontend-builder
+    container_name: ai-object-counter-frontend
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+    environment:
+      - NODE_ENV=development
+      - VITE_API_URL=http://localhost:5000
+    networks:
+      - ai-counter-network
+    restart: unless-stopped
+    command: npm run dev -- --host 0.0.0.0
+
+  # Production Full Stack
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: ai-object-counter-app
+    ports:
+      - "80:80"
+      - "5000:5000"
+    volumes:
+      - ./uploads:/app/backend/uploads
+      - model_cache:/app/backend/model_cache
+    environment:
+      - FLASK_ENV=production
+      - PYTHONPATH=/app/backend
+    networks:
+      - ai-counter-network
+    restart: unless-stopped
+    profiles:
+      - production
+
+  # Database Service (Optional)
+  db:
+    image: mysql:8.0
+    container_name: ai-object-counter-db
+    environment:
+      MYSQL_ROOT_PASSWORD: rootpassword
+      MYSQL_DATABASE: ai_object_counter
+      MYSQL_USER: aiuser
+      MYSQL_PASSWORD: aipassword
+    ports:
+      - "3306:3306"
+    volumes:
+      - mysql_data:/var/lib/mysql
+      - ./backend/setup_mysql.sql:/docker-entrypoint-initdb.d/setup_mysql.sql
+    networks:
+      - ai-counter-network
+    restart: unless-stopped
+    profiles:
+      - production
+
+  # Redis Cache (Optional)
+  redis:
+    image: redis:7-alpine
+    container_name: ai-object-counter-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    networks:
+      - ai-counter-network
+    restart: unless-stopped
+    profiles:
+      - production
+
+  # Monitoring Stack (Optional)
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: ai-object-counter-prometheus
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml
+      - prometheus_data:/prometheus
+    networks:
+      - ai-counter-network
+    restart: unless-stopped
+    profiles:
+      - monitoring
+
+  grafana:
+    image: grafana/grafana:latest
+    container_name: ai-object-counter-grafana
+    ports:
+      - "3001:3000"
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+    volumes:
+      - grafana_data:/var/lib/grafana
+    networks:
+      - ai-counter-network
+    restart: unless-stopped
+    profiles:
+      - monitoring
+
+volumes:
+  model_cache:
+    driver: local
+  mysql_data:
+    driver: local
+  redis_data:
+    driver: local
+  prometheus_data:
+    driver: local
+  grafana_data:
+    driver: local
+
+networks:
+  ai-counter-network:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.20.0.0/16
